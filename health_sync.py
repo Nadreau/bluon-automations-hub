@@ -61,30 +61,31 @@ SKIP_FILES = {"diag.yml", "maint.yml", "enrich.yml"}  # manual utility jobs, not
 
 # friendly name / what-it-does / human schedule / live report page — keyed "repo/file"
 CATALOG = {
- "bluon-account-agent/status-refresh.yml": ("Account directory numbers", "Pulls live HubSpot stats (activated/pending/ARR) into the Accounts directory rows + status pages", "2×/day weekdays", "https://www.notion.so/356576a5c12d80bfaa75c13940485416"),
- "bluon-account-agent/route.yml": ("Call router + account briefs", "Reads new calls in the reps' meeting DBs + Dropbox, tags the right account, logs to its Call History, refreshes the page", "Every 2h, 8:30a–6:30p ET weekdays", "https://www.notion.so/356576a5c12d80bfaa75c13940485416"),
- "bluon-account-agent/refresh-accounts.yml": ("Account pages weekly refresh", "Incrementally refreshes every built account page (scorecard, org chart, call history) — only rewrites accounts whose data changed", "Sundays ~7am ET", "https://www.notion.so/356576a5c12d80bfaa75c13940485416"),
- "bluon-account-agent/build-all.yml": ("Account page builder", "Builds rich account pages for any not-yet-built directory accounts", "2×/day", "https://www.notion.so/356576a5c12d80bfaa75c13940485416"),
- "bluon-account-agent/archive.yml": ("Call archive sweep", "Moves Sales Pitches + Kickoff rows older than 2 months into the Archive (keeps the live DBs fast)", "Sundays", ""),
- "bluon-ads-dashboard/update-meta-reporting.yml": ("Meta ads report", "Rebuilds the Meta Ads Reporting page from the Meta API", "Daily ~8am ET", "https://www.notion.so/37a576a5c12d81798a42eb3f518308fa"),
- "bluon-ads-dashboard/update-google-ads-reporting.yml": ("Google ads report", "Rebuilds the Google Ads Reporting page (all 4 Demand Gen campaigns + status)", "Daily ~8am ET", "https://www.notion.so/37b576a5c12d815080f8e7a194531cb6"),
- "bluon-ads-dashboard/update-openai-ads-reporting.yml": ("ChatGPT ads report", "Rebuilds the OpenAI/ChatGPT Ads Reporting page", "Daily ~8am ET", "https://www.notion.so/37b576a5c12d816e9fe9e7d126861a0f"),
- "bluon-ads-dashboard/update-landing-reporting.yml": ("Landing pages report", "Rebuilds the Landing Page Reporting page from GA4 (by-source funnel)", "Daily ~8am ET", "https://www.notion.so/37b576a5c12d8133847ce3ef573f650b"),
- "bluon-ads-dashboard/update-dashboard.yml": ("Ads dashboard", "Daily top-level ads dashboard rebuild", "Daily ~7am ET", ""),
- "bluon-ads-dashboard/update-budget-breakdown.yml": ("Budget breakdown", "Rebuilds the audience budget breakdown page", "Daily ~11am ET", "https://www.notion.so/333576a5c12d81ab960bc7b23d554fcb"),
- "bluon-ads-dashboard/update-combined-overview.yml": ("Combined ads overview", "Rebuilds the all-platform combined overview", "Daily ~8am ET", "https://www.notion.so/2ac76c456c6e4a99bcb65bbf97340697"),
- "bluon-ads-dashboard/update-where-from.yml": ("Where They Came From", "Attribution report — how prospects heard about Bluon (call transcripts + demo sheet)", "Daily ~8:15am ET", "https://www.notion.so/38e576a5c12d8102b765e9f87fa79f78"),
- "bluon-ads-dashboard/sync-dco-database.yml": ("DCO sheet sync", "Mirrors Clay's DCO Google Sheet links into Notion", "Every 4h", ""),
- "bluon-sales-coach/grade.yml": ("Pitch + kickoff grader", "Grades new sales pitches and kickoff calls with Claude, writes scores back", "10am / 1pm / 4pm ET weekdays", ""),
- "bluon-sales-coach/digest.yml": ("Coaching digest", "Posts the daily coaching digest to Slack (Coaching Agent app)", "~6pm ET weekdays", ""),
- "bluon-sales-meeting-sync/sync.yml": ("Sales standup mirror", "Mirrors the 10am sales standup note (summary, action items, transcript) into the shared Internal Sales Meetings DB", "10:30a–12:30p ET sweep, Mon–Sat", ""),
- "bluon-email-machine/rolling-drafts.yml": ("Email drafts (rolling)", "Drafts segment emails on the rolling schedule", "paused", ""),
- "bluon-email-machine/to-hubspot.yml": ("Email → HubSpot", "Pushes approved email drafts into HubSpot", "paused", ""),
- "bluon-email-machine/approval-notify.yml": ("Email approval ping", "Slack ping when a draft awaits approval", "paused", ""),
- "bluon-email-machine/reporting.yml": ("Email reporting", "Rebuilds the Email Reporting page", "paused", "https://www.notion.so/38e576a5c12d81879c21f82642db1fa1"),
- "bluon-email-machine/regen-mockup.yml": ("Email mockup regen", "Regenerates an email mockup on request", "paused", ""),
- "bluon-email-machine/weekly-drafts.yml": ("Email weekly drafts", "Superseded weekly draft batch — manual only", "manual", ""),
- "bluon-automations-hub/health.yml": ("Automations health sync", "This page — checks every automation's minutes, latest run and health, and rewrites this story", "3×/day", ""),
+ # key: (name, what it does, human schedule, live report page, flow "source → destination")
+ "bluon-account-agent/status-refresh.yml": ("Account numbers refresh", "Keeps every account's Activated / Pending / ARR current", "2×/day weekdays", "https://www.notion.so/356576a5c12d80bfaa75c13940485416", "HubSpot B4B deals → Accounts directory (Notion)"),
+ "bluon-account-agent/route.yml": ("Call router", "Files every new rep call to the right account + refreshes that account's brief", "Every 2h, 8:30a–6:30p ET wkdys", "https://www.notion.so/356576a5c12d80bfaa75c13940485416", "Rep call DBs + Dropbox → account pages (Call History + brief)"),
+ "bluon-account-agent/refresh-accounts.yml": ("Weekly page refresh", "Safety-net pass over all 1,032 account pages — only rewrites what changed", "Sundays ~1pm ET", "https://www.notion.so/356576a5c12d80bfaa75c13940485416", "HubSpot + call DBs → all account pages"),
+ "bluon-account-agent/build-all.yml": ("New-account page builder", "Builds a rich page for any account that doesn't have one yet", "2×/day", "https://www.notion.so/356576a5c12d80bfaa75c13940485416", "HubSpot → new account pages (Notion)"),
+ "bluon-account-agent/archive.yml": ("Old-call archiver", "Moves calls older than 2 months to the Archive so live DBs stay fast", "Sundays", "", "Sales Pitches + Kickoffs DBs → Archive DBs"),
+ "bluon-ads-dashboard/update-meta-reporting.yml": ("Meta ads report", "Rebuilds the Meta report: spend, CTR, reach per ad set", "Daily ~8am ET", "https://www.notion.so/37a576a5c12d81798a42eb3f518308fa", "Meta Ads API → Meta Ads Reporting page"),
+ "bluon-ads-dashboard/update-google-ads-reporting.yml": ("Google ads report", "Rebuilds the Google report: all 4 Demand Gen campaigns", "Daily ~8am ET", "https://www.notion.so/37b576a5c12d815080f8e7a194531cb6", "Google Ads API → Google Ads Reporting page"),
+ "bluon-ads-dashboard/update-openai-ads-reporting.yml": ("ChatGPT ads report", "Rebuilds the ChatGPT ads report", "Daily ~8am ET", "https://www.notion.so/37b576a5c12d816e9fe9e7d126861a0f", "OpenAI Ads API → ChatGPT Ads Reporting page"),
+ "bluon-ads-dashboard/update-landing-reporting.yml": ("Landing pages report", "Web traffic funnel by source", "Daily ~8am ET", "https://www.notion.so/37b576a5c12d8133847ce3ef573f650b", "GA4 → Landing Page Reporting page"),
+ "bluon-ads-dashboard/update-dashboard.yml": ("Ads dashboard", "Top-level daily ads dashboard", "Daily ~7am ET", "", "Meta Ads API → Ads dashboard page"),
+ "bluon-ads-dashboard/update-budget-breakdown.yml": ("Budget breakdown", "Where the daily ad budget goes, by audience", "Daily ~11am ET", "https://www.notion.so/333576a5c12d81ab960bc7b23d554fcb", "Meta Ads API → Budget Breakdown page"),
+ "bluon-ads-dashboard/update-combined-overview.yml": ("Combined ads overview", "All ad platforms on one page", "Daily ~8am ET", "https://www.notion.so/2ac76c456c6e4a99bcb65bbf97340697", "Meta + Google + OpenAI APIs → Combined Overview page"),
+ "bluon-ads-dashboard/update-where-from.yml": ("Where They Came From", "How prospects say they heard about Bluon", "Daily ~8:15am ET", "https://www.notion.so/38e576a5c12d8102b765e9f87fa79f78", "Sales-call transcripts + demo sheet → Attribution page"),
+ "bluon-ads-dashboard/sync-dco-database.yml": ("DCO sheet sync", "Pulls Clay's new ad links into Notion", "Every 4h", "", "Clay's Google Sheet → DCO database (Notion)"),
+ "bluon-sales-coach/grade.yml": ("Pitch + kickoff grader", "AI-grades every new sales pitch and kickoff call", "10a / 1p / 4p ET wkdys", "", "B4B Kickoffs + Sales Pitches DBs → scores on each call (Notion)"),
+ "bluon-sales-coach/digest.yml": ("Coaching digest", "Sends each rep their daily coaching summary", "~6pm ET weekdays", "", "Call scores (Notion) → Slack (Coaching Agent)"),
+ "bluon-sales-meeting-sync/sync.yml": ("AM standup → shared Sales DB", "Copies Niko's 10am sales standup note (summary, action items, transcript) into the team's shared database", "10:30a–12:30p ET sweep, Mon–Sat", "", "Niko's personal Notion → Internal Sales Meetings DB (Bluon)"),
+ "bluon-email-machine/rolling-drafts.yml": ("Email drafts (rolling)", "Drafts segment emails on a rolling schedule", "paused", "", "HubSpot segments → email drafts (Notion)"),
+ "bluon-email-machine/to-hubspot.yml": ("Email → HubSpot", "Pushes approved drafts into HubSpot", "paused", "", "Approved drafts (Notion) → HubSpot emails"),
+ "bluon-email-machine/approval-notify.yml": ("Email approval ping", "Slack ping when a draft awaits approval", "paused", "", "Notion draft status → Slack"),
+ "bluon-email-machine/reporting.yml": ("Email reporting", "Email performance report", "paused", "https://www.notion.so/38e576a5c12d81879c21f82642db1fa1", "HubSpot email stats → Email Reporting page"),
+ "bluon-email-machine/regen-mockup.yml": ("Email mockup regen", "Regenerates an email mockup on request", "paused", "", "Notion request → email mockup"),
+ "bluon-email-machine/weekly-drafts.yml": ("Email weekly drafts", "Superseded weekly batch", "manual", "", "—"),
+ "bluon-automations-hub/health.yml": ("This health page", "Checks every automation and rewrites this page", "3×/day", "", "GitHub + billing APIs → this page"),
 }
 PAUSE_REASONS = {
     "bluon-email-machine": "Paused on purpose (Jul 5) — the email machine project is shelved; its webhooks had kept firing for weeks",
@@ -139,7 +140,7 @@ for repo, system in REPOS.items():
         page += 1
     for wid, wf in wfs.items():
         fname = wf["path"].split("/")[-1]
-        friendly, desc, sched, report = CATALOG.get(f"{repo}/{fname}", (wf["name"], "", "", ""))
+        friendly, desc, sched, report, flow = CATALOG.get(f"{repo}/{fname}", (wf["name"], "", "", "", ""))
         run = latest.get(wid)
         if run is None:   # nothing this cycle — fetch the actual latest for status
             rr = gh(f"/repos/Nadreau/{repo}/actions/workflows/{wid}/runs?per_page=1&exclude_pull_requests=true").get("workflow_runs", [])
@@ -173,7 +174,7 @@ for repo, system in REPOS.items():
             else:
                 st, why = "🔴 Failing", "Run failed — check the log"
         rows.append(dict(repo=repo, system=system, file=fname, friendly=friendly, desc=desc,
-                         sched=sched, report=report, public=public, status=st, why=why,
+                         sched=sched, report=report, flow=flow, public=public, status=st, why=why,
                          mins=mins.get(wid, 0), run=run, wf=wf))
 
 rows.sort(key=lambda x: -x["mins"])
@@ -226,38 +227,56 @@ by_sys = {}
 for r in rows: by_sys.setdefault(r["system"], []).append(r)
 sys_order = sorted(by_sys, key=lambda s: -sum(x["mins"] for x in by_sys[s]))
 
-blocks = [{"type": "heading_1", "heading_1": {"rich_text": T("Systems — Ranked by Minutes Burned")}}]
-for s in sys_order:
-    items = sorted(by_sys[s], key=lambda x: -x["mins"])
-    smin = sum(x["mins"] for x in items)
-    icons = "".join(x["status"][0] for x in items)   # e.g. 🔴🔴🟢⏸
-    if all(x["repo"] in runner_state for x in items):
-        vis = "🖥 Niko's Mac — free"
-    elif all(x["public"] for x in items):
-        vis = "🌐 public cloud — free"
-    else:
-        vis = "☁️ cloud — metered" if all(not x["public"] for x in items) else "mixed"
+def _cells(*vals):
+    return {"type": "table_row", "table_row": {"cells": [T(v) for v in vals]}}
+def _hcells(*vals):
+    return {"type": "table_row", "table_row": {"cells": [TB(v) for v in vals]}}
+
+SYS_BLURB = {
+    "Account Intelligence": "The self-maintaining account pages: HubSpot numbers, routed calls, briefs — 1,032 accounts.",
+    "Ads Reporting": "The daily marketing report pages (Meta, Google, ChatGPT, landing, attribution).",
+    "Sales Coaching": "AI grading of every pitch/kickoff + the daily Slack digest.",
+    "Meeting Sync": "Niko's AM standup note, copied into the team's shared meetings database.",
+    "Email Machine": "Cold-email drafting system — shelved for now.",
+    "Research Agents": "On-demand company / market research.",
+    "Health": "The watcher that keeps this page honest.",
+}
+
+blocks = []
+# ── overview: one row per system, ranked by minutes ──
+blocks.append({"type": "heading_1", "heading_1": {"rich_text": T("At a Glance")}})
+by_sys = {}
+for r in rows: by_sys.setdefault(r["system"], []).append(r)
+sys_order = sorted(by_sys, key=lambda s: -sum(x["mins"] for x in by_sys[s]))
+ov = [_hcells("System", "Agents", "Health", "Min (mo)", "Runs on")]
+for sname in sys_order:
+    items = by_sys[sname]
+    icons = "".join(x["status"].split()[0] for x in sorted(items, key=lambda x: -x["mins"]))
+    where = ("🖥 Niko's Mac — free" if all(x["repo"] in runner_state for x in items)
+             else ("🌐 cloud — free" if all(x["public"] for x in items) else "☁️ cloud"))
+    ov.append(_cells(sname, str(len(items)), icons, f"{sum(x['mins'] for x in items):,}", where))
+blocks.append({"type": "table", "table": {"table_width": 5, "has_column_header": True,
+    "has_row_header": False, "children": ov}})
+
+# ── per-system sections: heading + purpose + clean table ──
+for sname in sys_order:
+    items = sorted(by_sys[sname], key=lambda x: -x["mins"])
     blocks.append({"type": "divider", "divider": {}})
-    blocks.append({"type": "heading_1", "heading_1": {"rich_text": T(f"{s}    {smin:,} min · {len(items)} agents · {vis}")}})
-    all_paused = all(x["status"].startswith("⏸") for x in items)
-    if all_paused:
-        blocks.append({"type": "callout", "callout": {"rich_text": T(
-            f"⏸ ENTIRE SYSTEM PAUSED   ·   {smin:,} min this month   ·   {items[0]['why']}"),
-            "icon": {"emoji": "📊"}, "color": "gray_background"}})
-        continue
+    blocks.append({"type": "heading_2", "heading_2": {"rich_text": T(f"{sname}")}})
+    blocks.append({"type": "paragraph", "paragraph": {"rich_text": [
+        {"type": "text", "text": {"content": SYS_BLURB.get(sname, "")},
+         "annotations": {"italic": True, "color": "gray"}}]}})
+    tbl = [_hcells("", "Automation", "Connection (from → to)", "Schedule", "Last run")]
     for x in items:
-        where = ("🖥 Niko's Mac (free)" if x["repo"] in runner_state
-                 else ("🌐 GitHub cloud (free — public)" if x["public"] else "☁️ GitHub cloud (metered — private)"))
-        line1 = (f"{x['status'].upper()}   ·   {x['mins']:,} min this month   ·   runs on {where}   ·   "
-                 f"{x['sched'] or 'manual'}   ·   last run {_fmt_last(x['run'])}")
-        line2 = f"\n💬 {x['why']}" if not x["status"].startswith("🟢") else ""
-        line3 = f"\n⚙️ {x['desc']}" if x["desc"] else ""
-        blocks.append({"type": "heading_3", "heading_3": {"rich_text": T(x["friendly"])}})
-        blocks.append({"type": "callout", "callout": {"rich_text": T(line1 + line2 + line3),
-            "icon": {"emoji": "📊"}, "color": "gray_background"}})
+        status_cell = x["status"] + ("" if x["status"].startswith(("🟢", "▶️")) else f"\n{x['why'][:80]}")
+        name_cell = x["friendly"] + (f"\n{x['desc']}" if x["desc"] else "")
+        tbl.append(_cells(status_cell, name_cell, x.get("flow", "") or "—",
+                          x["sched"] or "manual", _fmt_last(x["run"])))
+    blocks.append({"type": "table", "table": {"table_width": 5, "has_column_header": True,
+        "has_row_header": False, "children": tbl}})
 
 blocks.append({"type": "divider", "divider": {}})
-blocks.append({"type": "heading_1", "heading_1": {"rich_text": T("Full Detail — every automation, click through to logs & report pages")}})
+blocks.append({"type": "heading_2", "heading_2": {"rich_text": T("🗂 Click-through detail (run logs + report pages)")}})
 
 # insert after the anchor banner (before the DB). Chunks are appended in REVERSE order,
 # each anchored to the banner itself — so chunk order can't interleave with the DB block.
