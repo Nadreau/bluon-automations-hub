@@ -171,7 +171,8 @@ blocked = any("billing block" in r["why"] for r in rows)
 over = max(0, total_bill - INCLUDED_MIN)
 stamp = now.strftime("%b %d, %I:%M %p UTC")
 
-# ── 1) rewrite the page story (everything above the detail DB) ──
+# ── 1) rewrite the page (Meta-reporting layout: H1 sections w/ inline stats, per-item
+#      heading_3 + gray stat callout, · separators, dividers). Detail DB stays at bottom. ──
 kids = nt("GET", f"blocks/{PAGE}/children?page_size=100").get("results", [])
 anchor = next((b for b in kids if b["type"] == "callout"), None)
 dbblock = next((b for b in kids if b["type"] == "child_database"), None)
@@ -180,44 +181,58 @@ for b in kids:   # clear everything managed except the anchor callout + the DB i
         nt("DELETE", f"blocks/{b['id']}")
 
 pct = min(100, round(total_bill / INCLUDED_MIN * 100))
-head = (f"{total_bill:,} of {INCLUDED_MIN:,} free GitHub minutes used this month ({pct}%)"
-        + (f" — {over:,} min over the free tier" if over else "")
-        + f". Currently metered (private repos): {counted:,} min · running free (public repos): {free_pub:,} min. "
-        + ("⛔ Private-repo automations are BLOCKED until an Actions budget is set. " if blocked else "✅ All systems running. ")
-        + f"Resets on the 1st. Updated {stamp}.")
+head = (f"This month  ·  {total_bill:,} / {INCLUDED_MIN:,} free minutes ({pct}%)"
+        + (f"  ·  {over:,} min over" if over else "")
+        + f"  ·  🔒 metered {counted:,} min  ·  🌐 free {free_pub:,} min"
+        + f"  ·  {n_ok} healthy · {n_fail} failing · {n_pause} paused"
+        + (f"\n⛔ Private-repo automations are BLOCKED — GitHub won't start their runs until an Actions budget is set. Public ones keep running free." if blocked else "\n✅ All systems running.")
+        + f"  Resets the 1st · updated {stamp}")
 if anchor:
     nt("PATCH", f"blocks/{anchor['id']}", {"callout": {"rich_text": T(head), "icon": {"emoji": "⛽"},
         "color": "red_background" if blocked else "green_background"}})
 
-story = [f"{n_ok} automations healthy · {n_fail} failing · {n_pause} paused · {n_dorm} dormant."]
-if blocked:
-    story.append("Why things are failing: the account hit 100% of its free 2,000 Actions minutes, so GitHub refuses to start any run in a PRIVATE repo. Nothing is broken in the automations themselves — they resume the moment a paid budget (> $0) is set on the account. Public repos are unaffected and keep running for free.")
-top = [r for r in rows if r["mins"] > 0][:3]
-if top:
-    story.append("Where the minutes went: " + " · ".join(f"{r['friendly']} ({r['mins']:,} min{', free — public' if r['public'] else ''})" for r in top)
-                 + f". The account-page refresh was rebuilt on Jul 3 to skip unchanged accounts, which cuts its cost ~7× going forward.")
-if n_pause:
-    story.append("Paused on purpose: the Email Machine (all 6 jobs) — shelved project; it was still receiving webhooks until Jul 5, which is why it kept sending failure emails.")
+def _fmt_last(run):
+    return pdate(run["run_started_at"]).strftime("%b %-d") if run else "never"
 
-blocks = [{"type": "heading_3", "heading_3": {"rich_text": T("📖 The story right now")}}]
-blocks += [{"type": "bulleted_list_item", "bulleted_list_item": {"rich_text": T(s)}} for s in story]
-blocks.append({"type": "heading_3", "heading_3": {"rich_text": T("⏱ Minutes this month — biggest consumers first")}})
-tbl_rows = [{"type": "table_row", "table_row": {"cells": [TB("Automation"), TB("Minutes"), TB("Repo"), TB("Status"), TB("Why")]}}]
-for r in rows:
-    vis = "🌐 public (free)" if r["public"] else "🔒 private (metered)"
-    tbl_rows.append({"type": "table_row", "table_row": {"cells": [
-        T(r["friendly"]), T(f"{r['mins']:,}" if r["mins"] else "0"), T(f"{vis}\n{r['repo']}"),
-        T(r["status"]), T(r["why"])]}})
-blocks.append({"type": "table", "table": {"table_width": 5, "has_column_header": True,
-    "has_row_header": False, "children": tbl_rows}})
-blocks.append({"type": "heading_3", "heading_3": {"rich_text": T("🗂 Full detail — every automation, click through to logs & report pages")}})
+# group by system, rank systems + automations by minutes
+by_sys = {}
+for r in rows: by_sys.setdefault(r["system"], []).append(r)
+sys_order = sorted(by_sys, key=lambda s: -sum(x["mins"] for x in by_sys[s]))
 
-# insert in order right after the anchor callout (before the DB)
-prev = anchor["id"] if anchor else None
-for b in blocks:
-    res = nt("PATCH", f"blocks/{PAGE}/children", {"children": [b], **({"after": prev} if prev else {})})
-    got = res.get("results", [])
-    if got: prev = got[0]["id"]
+blocks = [{"type": "heading_1", "heading_1": {"rich_text": T("Systems — Ranked by Minutes Burned")}}]
+for s in sys_order:
+    items = sorted(by_sys[s], key=lambda x: -x["mins"])
+    smin = sum(x["mins"] for x in items)
+    icons = "".join(x["status"][0] for x in items)   # e.g. 🔴🔴🟢⏸
+    vis = "🌐 public — runs free" if all(x["public"] for x in items) else \
+          ("🔒 private — metered" if all(not x["public"] for x in items) else "🔒/🌐 mixed")
+    blocks.append({"type": "divider", "divider": {}})
+    blocks.append({"type": "heading_1", "heading_1": {"rich_text": T(f"{s}    {smin:,} min · {len(items)} agents · {vis}")}})
+    all_paused = all(x["status"].startswith("⏸") for x in items)
+    if all_paused:
+        blocks.append({"type": "callout", "callout": {"rich_text": T(
+            f"⏸ ENTIRE SYSTEM PAUSED   ·   {smin:,} min this month   ·   {items[0]['why']}"),
+            "icon": {"emoji": "📊"}, "color": "gray_background"}})
+        continue
+    for x in items:
+        line1 = (f"{x['status'].upper()}   ·   {x['mins']:,} min this month   ·   "
+                 f"{'🌐 public (free)' if x['public'] else '🔒 private (metered)'}   ·   "
+                 f"{x['sched'] or 'manual'}   ·   last run {_fmt_last(x['run'])}")
+        line2 = f"\n💬 {x['why']}" if not x["status"].startswith("🟢") else ""
+        line3 = f"\n⚙️ {x['desc']}" if x["desc"] else ""
+        blocks.append({"type": "heading_3", "heading_3": {"rich_text": T(x["friendly"])}})
+        blocks.append({"type": "callout", "callout": {"rich_text": T(line1 + line2 + line3),
+            "icon": {"emoji": "📊"}, "color": "gray_background"}})
+
+blocks.append({"type": "divider", "divider": {}})
+blocks.append({"type": "heading_1", "heading_1": {"rich_text": T("Full Detail — every automation, click through to logs & report pages")}})
+
+# insert after the anchor banner (before the DB). Chunks are appended in REVERSE order,
+# each anchored to the banner itself — so chunk order can't interleave with the DB block.
+CH = 20
+chunks = [blocks[i:i + CH] for i in range(0, len(blocks), CH)]
+for chunk in reversed(chunks):
+    nt("PATCH", f"blocks/{PAGE}/children", {"children": chunk, **({"after": anchor["id"]} if anchor else {})})
 
 # ── 2) refresh the detail DB rows ──
 existing = {}
