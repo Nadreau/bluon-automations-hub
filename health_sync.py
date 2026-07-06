@@ -73,7 +73,7 @@ CATALOG = {
  "bluon-ads-dashboard/update-landing-reporting.yml": ("Landing pages report", "Web traffic funnel by source", "Daily ~8am ET", "https://www.notion.so/37b576a5c12d8133847ce3ef573f650b", "GA4 → Landing Page Reporting page"),
  "bluon-ads-dashboard/update-dashboard.yml": ("Ads dashboard", "Top-level daily ads dashboard", "Daily ~7am ET", "", "Meta Ads API → Ads dashboard page"),
  "bluon-ads-dashboard/update-budget-breakdown.yml": ("Budget breakdown", "Where the daily ad budget goes, by audience", "Daily ~11am ET", "https://www.notion.so/333576a5c12d81ab960bc7b23d554fcb", "Meta Ads API → Budget Breakdown page"),
- "bluon-ads-dashboard/update-combined-overview.yml": ("Combined ads overview", "All ad platforms on one page", "Daily ~8am ET", "https://www.notion.so/2ac76c456c6e4a99bcb65bbf97340697", "Meta + Google + OpenAI APIs → Combined Overview page"),
+ "bluon-ads-dashboard/update-combined-overview.yml": ("Combined ads overview", "All ad platforms on one page", "Daily ~8am ET", "https://www.notion.so/37c576a5c12d80bb83d2e39cd6699035", "Meta + Google + OpenAI APIs → Combined Overview page"),
  "bluon-ads-dashboard/update-where-from.yml": ("Where They Came From", "How prospects say they heard about Bluon", "Daily ~8:15am ET", "https://www.notion.so/38e576a5c12d8102b765e9f87fa79f78", "Sales-call transcripts + demo sheet → Attribution page"),
  "bluon-ads-dashboard/sync-dco-database.yml": ("DCO sheet sync", "Pulls Clay's new ad links into Notion", "Every 4h", "", "Clay's Google Sheet → DCO database (Notion)"),
  "bluon-sales-coach/grade.yml": ("Pitch + kickoff grader", "AI-grades every new sales pitch and kickoff call", "10a / 1p / 4p ET wkdys", "", "B4B Kickoffs + Sales Pitches DBs → scores on each call (Notion)"),
