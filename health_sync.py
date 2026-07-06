@@ -107,6 +107,12 @@ for it in bill.get("usageItems", []):
         rn = it.get("repositoryName") or "?"
         billing_repo_mins[rn] = billing_repo_mins.get(rn, 0) + it.get("quantity", 0)
 
+# ── self-hosted runner state per repo (jobs on Niko's Mac = zero minutes) ──
+runner_state = {}   # repo -> "online" | "offline"
+for _repo in REPOS:
+    _rs = gh(f"/repos/Nadreau/{_repo}/actions/runners").get("runners", [])
+    if _rs: runner_state[_repo] = _rs[0]["status"]
+
 # ── gather: per repo → visibility, workflows, latest runs, minutes this cycle ──
 rows = []          # one dict per tracked workflow
 repo_public = {}
@@ -143,15 +149,27 @@ for repo, system in REPOS.items():
             st, why = "⏸ Paused", PAUSE_REASONS.get(repo, "Paused on purpose")
         elif not run:
             st, why = "💤 Dormant", "Never run"
+        elif run.get("status") == "in_progress":
+            st, why = "▶️ Running", "Running right now" + (" on the Mac runner" if repo in runner_state else "")
+        elif run.get("status") == "queued":
+            if runner_state.get(repo) == "offline":
+                st, why = "🕐 Queued", "Waiting for Niko's Mac to come online (runner offline) — runs on wake, expires after 24h"
+            elif repo in runner_state:
+                st, why = "🕐 Queued", "Waiting for a free slot on the Mac runner (another job is running)"
+            else:
+                st, why = "🕐 Queued", "Waiting for a GitHub-hosted runner"
         elif (now - pdate(run["run_started_at"])).days > 30:
             st, why = "💤 Dormant", f"No runs in {(now - pdate(run['run_started_at'])).days} days"
-        elif run.get("status") in ("in_progress", "queued") or run.get("conclusion") == "success":
+        elif run.get("conclusion") == "success":
             st, why = "🟢 Healthy", "Running normally"
         else:
             # billing-blocked runs DO get a job, but it dies in seconds with ZERO steps executed
             jl = gh(f"/repos/Nadreau/{repo}/actions/runs/{run['id']}/jobs").get("jobs", [])
             if jl and all(not j.get("steps") for j in jl):
-                st, why = "🔴 Failing", "Never started — GitHub billing block (free minutes exhausted; resumes once a budget is set)"
+                why = ("Last run hit the GitHub billing block — since moved to the Mac runner; clears itself at the next scheduled run"
+                       if repo in runner_state else
+                       "Never started — GitHub billing block (free minutes exhausted; resumes once a budget is set)")
+                st = "🔴 Failing"
             else:
                 st, why = "🔴 Failing", "Run failed — check the log"
         rows.append(dict(repo=repo, system=system, file=fname, friendly=friendly, desc=desc,
@@ -167,6 +185,10 @@ n_ok = sum(1 for r in rows if r["status"].startswith("🟢"))
 n_fail = sum(1 for r in rows if r["status"].startswith("🔴"))
 n_pause = sum(1 for r in rows if r["status"].startswith("⏸"))
 n_dorm = sum(1 for r in rows if r["status"].startswith("💤"))
+n_run = sum(1 for r in rows if r["status"].startswith("▶️"))
+n_queue = sum(1 for r in rows if r["status"].startswith("🕐"))
+mac_repos = len(runner_state)
+mac_online = sum(1 for v in runner_state.values() if v == "online")
 blocked = any("billing block" in r["why"] for r in rows)
 over = max(0, total_bill - INCLUDED_MIN)
 stamp = now.strftime("%b %d, %I:%M %p UTC")
@@ -181,11 +203,16 @@ for b in kids:   # clear everything managed except the anchor callout + the DB i
         nt("DELETE", f"blocks/{b['id']}")
 
 pct = min(100, round(total_bill / INCLUDED_MIN * 100))
-head = (f"This month  ·  {total_bill:,} / {INCLUDED_MIN:,} free minutes ({pct}%)"
+live_bits = [f"{n_ok} healthy"]
+if n_run: live_bits.append(f"{n_run} running now")
+if n_queue: live_bits.append(f"{n_queue} queued")
+live_bits += [f"{n_fail} failing", f"{n_pause} paused"]
+mac_bit = (f"🖥 Mac runner ONLINE — {mac_repos} systems run free on Niko's Mac" if mac_online == mac_repos and mac_repos
+           else f"🖥 ⚠️ Mac runner OFFLINE ({mac_online}/{mac_repos}) — its jobs queue until the Mac wakes")
+head = (f"This month  ·  {total_bill:,} / {INCLUDED_MIN:,} free GitHub minutes ({pct}%)"
         + (f"  ·  {over:,} min over" if over else "")
-        + f"  ·  🔒 metered {counted:,} min  ·  🌐 free {free_pub:,} min"
-        + f"  ·  {n_ok} healthy · {n_fail} failing · {n_pause} paused"
-        + (f"\n⛔ Private-repo automations are BLOCKED — GitHub won't start their runs until an Actions budget is set. Public ones keep running free." if blocked else "\n✅ All systems running.")
+        + f"  ·  {' · '.join(live_bits)}\n{mac_bit}"
+        + (f"\n⛔ GitHub-hosted runs in private repos are blocked (no budget set) — Mac-runner + public-repo jobs are unaffected." if blocked else "\n✅ All systems running.")
         + f"  Resets the 1st · updated {stamp}")
 if anchor:
     nt("PATCH", f"blocks/{anchor['id']}", {"callout": {"rich_text": T(head), "icon": {"emoji": "⛽"},
@@ -204,8 +231,12 @@ for s in sys_order:
     items = sorted(by_sys[s], key=lambda x: -x["mins"])
     smin = sum(x["mins"] for x in items)
     icons = "".join(x["status"][0] for x in items)   # e.g. 🔴🔴🟢⏸
-    vis = "🌐 public — runs free" if all(x["public"] for x in items) else \
-          ("🔒 private — metered" if all(not x["public"] for x in items) else "🔒/🌐 mixed")
+    if all(x["repo"] in runner_state for x in items):
+        vis = "🖥 Niko's Mac — free"
+    elif all(x["public"] for x in items):
+        vis = "🌐 public cloud — free"
+    else:
+        vis = "☁️ cloud — metered" if all(not x["public"] for x in items) else "mixed"
     blocks.append({"type": "divider", "divider": {}})
     blocks.append({"type": "heading_1", "heading_1": {"rich_text": T(f"{s}    {smin:,} min · {len(items)} agents · {vis}")}})
     all_paused = all(x["status"].startswith("⏸") for x in items)
@@ -215,8 +246,9 @@ for s in sys_order:
             "icon": {"emoji": "📊"}, "color": "gray_background"}})
         continue
     for x in items:
-        line1 = (f"{x['status'].upper()}   ·   {x['mins']:,} min this month   ·   "
-                 f"{'🌐 public (free)' if x['public'] else '🔒 private (metered)'}   ·   "
+        where = ("🖥 Niko's Mac (free)" if x["repo"] in runner_state
+                 else ("🌐 GitHub cloud (free — public)" if x["public"] else "☁️ GitHub cloud (metered — private)"))
+        line1 = (f"{x['status'].upper()}   ·   {x['mins']:,} min this month   ·   runs on {where}   ·   "
                  f"{x['sched'] or 'manual'}   ·   last run {_fmt_last(x['run'])}")
         line2 = f"\n💬 {x['why']}" if not x["status"].startswith("🟢") else ""
         line3 = f"\n⚙️ {x['desc']}" if x["desc"] else ""
