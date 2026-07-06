@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""Automations Hub health sync — keeps the Bluon Notion "Automations Hub" page current.
+"""Automations Hub — keeps the Bluon Notion "Automations Hub" page current as a LIVE story:
 
-For every tracked repo it discovers the GitHub Actions workflows, reads each one's
-latest run + enabled/disabled state, computes a health status, and upserts a row in
-the Automation Status DB (hub_config.json holds the Notion ids):
-  🟢 Healthy = latest run succeeded · 🔴 Failing = latest run failed
-  ⏸ Paused  = workflow disabled     · 💤 Dormant = no run in 30+ days
-Env: NOTION_KEY, GH_TOKEN (repo-scope PAT so private repos' runs are readable).
+  1. Headline callout: free-minutes meter for the month + whether private automations are blocked
+  2. "The story right now" — auto-generated narrative (what's healthy / failing / paused and WHY)
+  3. Minutes leaderboard — every automation ranked by Actions minutes burned this month,
+     with repo visibility (public = free / private = metered), status, and the reason
+  4. The detail database (rows also refreshed: status, last run, links)
+
+Status logic: disabled → ⏸ Paused · no run in 30d → 💤 Dormant · latest run OK/running → 🟢 Healthy
+· else 🔴 Failing. A failing run whose job never started (0 jobs) is flagged as GitHub's billing
+block, not a code failure.
+
+Env: NOTION_KEY, GH_TOKEN (repo-scope so private repos' run metadata is readable).
 """
-import json, os, sys, time, urllib.request, urllib.error
+import json, math, os, sys, time, urllib.request, urllib.error
 from datetime import datetime, timezone
 
 NK = os.environ["NOTION_KEY"]
 GH = os.environ["GH_TOKEN"]
 CFG = json.load(open(os.path.join(os.path.dirname(__file__) or ".", "hub_config.json")))
-DS = CFG["data_source_id"]
+DS = CFG["data_source_id"]; PAGE = CFG["page_id"]
 
 def nt(method, p, pl=None, retries=4):
     for i in range(retries):
@@ -40,6 +45,7 @@ def gh(p):
         sys.stderr.write(f"gh {p}: {e}\n"); return {}
 
 def T(s): return [{"type": "text", "text": {"content": (s or "")[:1900]}}]
+def TB(s): return [{"type": "text", "text": {"content": (s or "")[:1900]}, "annotations": {"bold": True}}]
 
 REPOS = {  # repo -> System
     "bluon-account-agent":   "Account Intelligence",
@@ -72,27 +78,148 @@ CATALOG = {
  "bluon-sales-coach/grade.yml": ("Pitch + kickoff grader", "Grades new sales pitches and kickoff calls with Claude, writes scores back", "10am / 1pm / 4pm ET weekdays", ""),
  "bluon-sales-coach/digest.yml": ("Coaching digest", "Posts the daily coaching digest to Slack (Coaching Agent app)", "~6pm ET weekdays", ""),
  "bluon-sales-meeting-sync/sync.yml": ("Sales standup mirror", "Mirrors the 10am sales standup note (summary, action items, transcript) into the shared Internal Sales Meetings DB", "10:30a–12:30p ET sweep, Mon–Sat", ""),
- "bluon-email-machine/rolling-drafts.yml": ("Email drafts (rolling)", "Drafts segment emails on the rolling schedule — PAUSED while the email machine is shelved", "paused", ""),
- "bluon-email-machine/to-hubspot.yml": ("Email → HubSpot", "Pushes approved email drafts into HubSpot — PAUSED", "paused", ""),
- "bluon-email-machine/approval-notify.yml": ("Email approval ping", "Slack ping when a draft awaits approval — PAUSED", "paused", ""),
- "bluon-email-machine/reporting.yml": ("Email reporting", "Rebuilds the Email Reporting page — PAUSED", "paused", "https://www.notion.so/38e576a5c12d81879c21f82642db1fa1"),
- "bluon-email-machine/regen-mockup.yml": ("Email mockup regen", "Regenerates an email mockup on request — PAUSED", "paused", ""),
+ "bluon-email-machine/rolling-drafts.yml": ("Email drafts (rolling)", "Drafts segment emails on the rolling schedule", "paused", ""),
+ "bluon-email-machine/to-hubspot.yml": ("Email → HubSpot", "Pushes approved email drafts into HubSpot", "paused", ""),
+ "bluon-email-machine/approval-notify.yml": ("Email approval ping", "Slack ping when a draft awaits approval", "paused", ""),
+ "bluon-email-machine/reporting.yml": ("Email reporting", "Rebuilds the Email Reporting page", "paused", "https://www.notion.so/38e576a5c12d81879c21f82642db1fa1"),
+ "bluon-email-machine/regen-mockup.yml": ("Email mockup regen", "Regenerates an email mockup on request", "paused", ""),
  "bluon-email-machine/weekly-drafts.yml": ("Email weekly drafts", "Superseded weekly draft batch — manual only", "manual", ""),
- "bluon-automations-hub/health.yml": ("Automations health sync", "This page — checks every automation's latest run and updates these rows", "Daily ~7:30am ET", ""),
+ "bluon-automations-hub/health.yml": ("Automations health sync", "This page — checks every automation's minutes, latest run and health, and rewrites this story", "3×/day", ""),
+}
+PAUSE_REASONS = {
+    "bluon-email-machine": "Paused on purpose (Jul 5) — the email machine project is shelved; its webhooks had kept firing for weeks",
+    "bluon-market-intel": "Paused — superseded by newer research automations",
 }
 
 now = datetime.now(timezone.utc)
+CYCLE_START = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+INCLUDED_MIN = 2000
+RATE = 0.006  # $/Linux-minute (from the billing API)
 
-def status_of(wf_state, run):
-    if wf_state != "active": return "⏸ Paused"
-    if not run: return "💤 Dormant"
-    started = datetime.strptime(run["run_started_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    if (now - started).days > 30: return "💤 Dormant"
-    if run.get("conclusion") == "success": return "🟢 Healthy"
-    if run.get("status") in ("in_progress", "queued") : return "🟢 Healthy"  # currently running
-    return "🔴 Failing"
+def iso(dt): return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+def pdate(s): return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
-# existing rows keyed by title
+# ── authoritative per-repo minutes from the billing API (what GitHub actually counts) ──
+billing_repo_mins = {}
+bill = gh(f"/users/Nadreau/settings/billing/usage?year={now.year}&month={now.month}")
+for it in bill.get("usageItems", []):
+    if it.get("product") == "actions" and "Linux" in it.get("sku", ""):
+        rn = it.get("repositoryName") or "?"
+        billing_repo_mins[rn] = billing_repo_mins.get(rn, 0) + it.get("quantity", 0)
+
+# ── gather: per repo → visibility, workflows, latest runs, minutes this cycle ──
+rows = []          # one dict per tracked workflow
+repo_public = {}
+for repo, system in REPOS.items():
+    meta = gh(f"/repos/Nadreau/{repo}")
+    public = not meta.get("private", True)
+    repo_public[repo] = public
+    wfs = {w["id"]: w for w in gh(f"/repos/Nadreau/{repo}/actions/workflows").get("workflows", [])
+           if w["path"].split("/")[-1] not in SKIP_FILES}
+    # billed minutes this cycle, per workflow (billed = ceil(wall-clock/60) per completed run)
+    mins, latest = {}, {}
+    page = 1
+    while page <= 6:
+        r = gh(f"/repos/Nadreau/{repo}/actions/runs?created=%3E%3D{CYCLE_START.date()}&per_page=100&page={page}&exclude_pull_requests=true")
+        runs = r.get("workflow_runs", [])
+        for run in runs:
+            wid = run["workflow_id"]
+            if wid not in wfs: continue
+            if wid not in latest: latest[wid] = run   # list is newest-first
+            if run.get("status") == "completed" and run.get("run_started_at") and run.get("updated_at"):
+                secs = (pdate(run["updated_at"]) - pdate(run["run_started_at"])).total_seconds()
+                if secs > 0: mins[wid] = mins.get(wid, 0) + max(1, math.ceil(secs / 60))
+        if len(runs) < 100: break
+        page += 1
+    for wid, wf in wfs.items():
+        fname = wf["path"].split("/")[-1]
+        friendly, desc, sched, report = CATALOG.get(f"{repo}/{fname}", (wf["name"], "", "", ""))
+        run = latest.get(wid)
+        if run is None:   # nothing this cycle — fetch the actual latest for status
+            rr = gh(f"/repos/Nadreau/{repo}/actions/workflows/{wid}/runs?per_page=1&exclude_pull_requests=true").get("workflow_runs", [])
+            run = rr[0] if rr else None
+        # status + WHY
+        if wf["state"] != "active":
+            st, why = "⏸ Paused", PAUSE_REASONS.get(repo, "Paused on purpose")
+        elif not run:
+            st, why = "💤 Dormant", "Never run"
+        elif (now - pdate(run["run_started_at"])).days > 30:
+            st, why = "💤 Dormant", f"No runs in {(now - pdate(run['run_started_at'])).days} days"
+        elif run.get("status") in ("in_progress", "queued") or run.get("conclusion") == "success":
+            st, why = "🟢 Healthy", "Running normally"
+        else:
+            # billing-blocked runs DO get a job, but it dies in seconds with ZERO steps executed
+            jl = gh(f"/repos/Nadreau/{repo}/actions/runs/{run['id']}/jobs").get("jobs", [])
+            if jl and all(not j.get("steps") for j in jl):
+                st, why = "🔴 Failing", "Never started — GitHub billing block (free minutes exhausted; resumes once a budget is set)"
+            else:
+                st, why = "🔴 Failing", "Run failed — check the log"
+        rows.append(dict(repo=repo, system=system, file=fname, friendly=friendly, desc=desc,
+                         sched=sched, report=report, public=public, status=st, why=why,
+                         mins=mins.get(wid, 0), run=run, wf=wf))
+
+rows.sort(key=lambda x: -x["mins"])
+# meter uses BILLING-grade numbers (GitHub's own count); leaderboard uses per-workflow estimates
+counted = round(sum(m for rn, m in billing_repo_mins.items() if not repo_public.get(rn, True)))
+free_pub = round(sum(m for rn, m in billing_repo_mins.items() if repo_public.get(rn, True)))
+total_bill = round(sum(billing_repo_mins.values()))
+n_ok = sum(1 for r in rows if r["status"].startswith("🟢"))
+n_fail = sum(1 for r in rows if r["status"].startswith("🔴"))
+n_pause = sum(1 for r in rows if r["status"].startswith("⏸"))
+n_dorm = sum(1 for r in rows if r["status"].startswith("💤"))
+blocked = any("billing block" in r["why"] for r in rows)
+over = max(0, total_bill - INCLUDED_MIN)
+stamp = now.strftime("%b %d, %I:%M %p UTC")
+
+# ── 1) rewrite the page story (everything above the detail DB) ──
+kids = nt("GET", f"blocks/{PAGE}/children?page_size=100").get("results", [])
+anchor = next((b for b in kids if b["type"] == "callout"), None)
+dbblock = next((b for b in kids if b["type"] == "child_database"), None)
+for b in kids:   # clear everything managed except the anchor callout + the DB itself
+    if b["id"] not in {anchor and anchor["id"], dbblock and dbblock["id"]}:
+        nt("DELETE", f"blocks/{b['id']}")
+
+pct = min(100, round(total_bill / INCLUDED_MIN * 100))
+head = (f"{total_bill:,} of {INCLUDED_MIN:,} free GitHub minutes used this month ({pct}%)"
+        + (f" — {over:,} min over the free tier" if over else "")
+        + f". Currently metered (private repos): {counted:,} min · running free (public repos): {free_pub:,} min. "
+        + ("⛔ Private-repo automations are BLOCKED until an Actions budget is set. " if blocked else "✅ All systems running. ")
+        + f"Resets on the 1st. Updated {stamp}.")
+if anchor:
+    nt("PATCH", f"blocks/{anchor['id']}", {"callout": {"rich_text": T(head), "icon": {"emoji": "⛽"},
+        "color": "red_background" if blocked else "green_background"}})
+
+story = [f"{n_ok} automations healthy · {n_fail} failing · {n_pause} paused · {n_dorm} dormant."]
+if blocked:
+    story.append("Why things are failing: the account hit 100% of its free 2,000 Actions minutes, so GitHub refuses to start any run in a PRIVATE repo. Nothing is broken in the automations themselves — they resume the moment a paid budget (> $0) is set on the account. Public repos are unaffected and keep running for free.")
+top = [r for r in rows if r["mins"] > 0][:3]
+if top:
+    story.append("Where the minutes went: " + " · ".join(f"{r['friendly']} ({r['mins']:,} min{', free — public' if r['public'] else ''})" for r in top)
+                 + f". The account-page refresh was rebuilt on Jul 3 to skip unchanged accounts, which cuts its cost ~7× going forward.")
+if n_pause:
+    story.append("Paused on purpose: the Email Machine (all 6 jobs) — shelved project; it was still receiving webhooks until Jul 5, which is why it kept sending failure emails.")
+
+blocks = [{"type": "heading_3", "heading_3": {"rich_text": T("📖 The story right now")}}]
+blocks += [{"type": "bulleted_list_item", "bulleted_list_item": {"rich_text": T(s)}} for s in story]
+blocks.append({"type": "heading_3", "heading_3": {"rich_text": T("⏱ Minutes this month — biggest consumers first")}})
+tbl_rows = [{"type": "table_row", "table_row": {"cells": [TB("Automation"), TB("Minutes"), TB("Repo"), TB("Status"), TB("Why")]}}]
+for r in rows:
+    vis = "🌐 public (free)" if r["public"] else "🔒 private (metered)"
+    tbl_rows.append({"type": "table_row", "table_row": {"cells": [
+        T(r["friendly"]), T(f"{r['mins']:,}" if r["mins"] else "0"), T(f"{vis}\n{r['repo']}"),
+        T(r["status"]), T(r["why"])]}})
+blocks.append({"type": "table", "table": {"table_width": 5, "has_column_header": True,
+    "has_row_header": False, "children": tbl_rows}})
+blocks.append({"type": "heading_3", "heading_3": {"rich_text": T("🗂 Full detail — every automation, click through to logs & report pages")}})
+
+# insert in order right after the anchor callout (before the DB)
+prev = anchor["id"] if anchor else None
+for b in blocks:
+    res = nt("PATCH", f"blocks/{PAGE}/children", {"children": [b], **({"after": prev} if prev else {})})
+    got = res.get("results", [])
+    if got: prev = got[0]["id"]
+
+# ── 2) refresh the detail DB rows ──
 existing = {}
 cur = None
 while True:
@@ -105,33 +232,24 @@ while True:
     if not r.get("has_more"): break
     cur = r["next_cursor"]
 
-count = 0
-for repo, system in REPOS.items():
-    wfs = gh(f"/repos/Nadreau/{repo}/actions/workflows").get("workflows", [])
-    for wf in wfs:
-        fname = wf["path"].split("/")[-1]
-        if fname in SKIP_FILES: continue
-        key = f"{repo}/{fname}"
-        friendly, desc, sched, report = CATALOG.get(key, (wf["name"], "", "", ""))
-        runs = gh(f"/repos/Nadreau/{repo}/actions/workflows/{wf['id']}/runs?per_page=1&exclude_pull_requests=true").get("workflow_runs", [])
-        run = runs[0] if runs else None
-        st = status_of(wf["state"], run)
-        props = {
-            "Automation": {"title": T(friendly)},
-            "System": {"select": {"name": system}},
-            "What it does": {"rich_text": T(desc)},
-            "Schedule": {"rich_text": T(sched)},
-            "Status": {"select": {"name": st}},
-            "Last result": {"select": {"name": (run.get("conclusion") or "—") if run else "—"}},
-            "Run log": {"url": run["html_url"] if run else wf["html_url"]},
-        }
-        if report: props["Report page"] = {"url": report}
-        if run: props["Last run"] = {"date": {"start": run["run_started_at"]}}
-        if friendly in existing:
-            nt("PATCH", f"pages/{existing[friendly]}", {"properties": props})
-        else:
-            nt("POST", "pages", {"parent": {"type": "data_source_id", "data_source_id": DS}, "properties": props})
-        count += 1
-        print(f"  {st}  {system:<20} {friendly}")
-        time.sleep(0.3)
-print(f"synced {count} automations")
+for r in rows:
+    run = r["run"]
+    props = {
+        "Automation": {"title": T(r["friendly"])},
+        "System": {"select": {"name": r["system"]}},
+        "What it does": {"rich_text": T(r["desc"])},
+        "Schedule": {"rich_text": T(r["sched"])},
+        "Status": {"select": {"name": r["status"]}},
+        "Last result": {"select": {"name": (run.get("conclusion") or "—") if run else "—"}},
+        "Run log": {"url": run["html_url"] if run else r["wf"]["html_url"]},
+    }
+    if r["report"]: props["Report page"] = {"url": r["report"]}
+    if run: props["Last run"] = {"date": {"start": run["run_started_at"]}}
+    if r["friendly"] in existing:
+        nt("PATCH", f"pages/{existing[r['friendly']]}", {"properties": props})
+    else:
+        nt("POST", "pages", {"parent": {"type": "data_source_id", "data_source_id": DS}, "properties": props})
+    time.sleep(0.25)
+
+print(f"story rebuilt · {len(rows)} automations · counted {counted} min (private) + {free_pub} free (public) · "
+      f"{n_ok}🟢 {n_fail}🔴 {n_pause}⏸ {n_dorm}💤")

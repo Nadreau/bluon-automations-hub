@@ -1,7 +1,7 @@
 name: Automations health sync
 on:
   schedule:
-    - cron: "30 11 * * *"   # daily ~7:30am ET
+    - cron: "30 11,16,21 * * *"   # ~7:30am / 12:30pm / 5:30pm ET
   workflow_dispatch:
 jobs:
   sync:
