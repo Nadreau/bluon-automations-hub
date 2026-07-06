@@ -108,6 +108,39 @@ for it in bill.get("usageItems", []):
         rn = it.get("repositoryName") or "?"
         billing_repo_mins[rn] = billing_repo_mins.get(rn, 0) + it.get("quantity", 0)
 
+# ── expected schedules (shared with nudge.py) for Overdue detection ──
+SCHED = {}
+try:
+    for _e in json.load(open(os.path.join(os.path.dirname(__file__) or ".", "schedules.json")))["entries"]:
+        SCHED.setdefault(f"{_e['repo']}/{_e['workflow']}", []).append(_e["cron"])
+except Exception: pass
+from datetime import timedelta
+def _cron_match(cron, dt):
+    def ok(field, val, lo, hi):
+        if field == "*": return True
+        for part in field.split(","):
+            step = 1
+            if "/" in part: part, s2 = part.split("/"); step = int(s2)
+            if part == "*": rng = range(lo, hi + 1)
+            elif "-" in part:
+                a, b = part.split("-"); rng = range(int(a), int(b) + 1)
+            else: rng = range(int(part), int(part) + 1)
+            if val in rng and (val - rng.start) % step == 0: return True
+        return False
+    m, hh, dom, mon, dow = cron.split()
+    return (ok(m, dt.minute, 0, 59) and ok(hh, dt.hour, 0, 23) and ok(dom, dt.day, 1, 31)
+            and ok(mon, dt.month, 1, 12) and ok(dow, dt.weekday() + 1 if dt.weekday() < 6 else 0, 0, 7))
+def last_expected_slot(key, now, grace_min=25, lookback_h=12):
+    best = None
+    for cron in SCHED.get(key, []):
+        t = (now - timedelta(minutes=grace_min)).replace(second=0, microsecond=0)
+        for _ in range(lookback_h * 60):
+            if _cron_match(cron, t):
+                if best is None or t > best: best = t
+                break
+            t -= timedelta(minutes=1)
+    return best
+
 # ── self-hosted runner state per repo (jobs on Niko's Mac = zero minutes) ──
 runner_state = {}   # repo -> "online" | "offline"
 for _repo in REPOS:
@@ -173,6 +206,11 @@ for repo, system in REPOS.items():
                 st = "🔴 Failing"
             else:
                 st, why = "🔴 Failing", "Run failed — check the log"
+        # Overdue: an expected slot passed but no run started for it (GitHub cron lag)
+        if st in ("🟢 Healthy", "🔴 Failing", "💤 Dormant") and wf["state"] == "active":
+            slot = last_expected_slot(f"{repo}/{fname}", now)
+            if slot and (run is None or pdate(run["created_at"] if "created_at" in run else run["run_started_at"]) < slot):
+                st, why = "⏳ Overdue", f"Its {slot:%H:%M} UTC slot hasn't started — GitHub cron is lagging; the Mac nudger fires it within ~10 min"
         rows.append(dict(repo=repo, system=system, file=fname, friendly=friendly, desc=desc,
                          sched=sched, report=report, flow=flow, public=public, status=st, why=why,
                          mins=mins.get(wid, 0), run=run, wf=wf))

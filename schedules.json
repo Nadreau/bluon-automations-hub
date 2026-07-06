@@ -1,0 +1,24 @@
+{
+  "_comment": "Single source of expected schedules (UTC crons, mirroring each workflow file). Used by nudge.py (launchd, every 10 min: dispatch if GitHub's cron is late) and health_sync.py (mark rows Overdue).",
+  "entries": [
+    {"repo": "bluon-account-agent",   "workflow": "status-refresh.yml",             "cron": "0 13,21 * * 1-5"},
+    {"repo": "bluon-account-agent",   "workflow": "build-all.yml",                  "cron": "17 13,21 * * *"},
+    {"repo": "bluon-account-agent",   "workflow": "route.yml",                      "cron": "30 12,14,16,18,20,22 * * 1-5"},
+    {"repo": "bluon-account-agent",   "workflow": "refresh-accounts.yml",           "cron": "0 17 * * 0"},
+    {"repo": "bluon-account-agent",   "workflow": "archive.yml",                    "cron": "0 12 * * 0"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "update-dashboard.yml",           "cron": "0 11 * * *"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "update-meta-reporting.yml",      "cron": "0 12 * * *"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "update-google-ads-reporting.yml","cron": "0 12 * * *"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "update-openai-ads-reporting.yml","cron": "0 12 * * *"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "update-landing-reporting.yml",   "cron": "0 12 * * *"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "update-combined-overview.yml",   "cron": "10 12 * * *"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "update-where-from.yml",          "cron": "15 12 * * *"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "update-budget-breakdown.yml",    "cron": "0 15 * * *"},
+    {"repo": "bluon-ads-dashboard",   "workflow": "sync-dco-database.yml",          "cron": "0 */4 * * *"},
+    {"repo": "bluon-sales-coach",     "workflow": "grade.yml",                      "cron": "0 14,17,20 * * 1-5"},
+    {"repo": "bluon-sales-coach",     "workflow": "digest.yml",                     "cron": "0 22 * * 1-5"},
+    {"repo": "bluon-sales-meeting-sync", "workflow": "sync.yml",                    "cron": "40 14 * * 1-6"},
+    {"repo": "bluon-sales-meeting-sync", "workflow": "sync.yml",                    "cron": "10,40 15 * * 1-6"},
+    {"repo": "bluon-automations-hub", "workflow": "health.yml",                     "cron": "30 11,16,21 * * *"}
+  ]
+}
