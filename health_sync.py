@@ -13,7 +13,7 @@ block, not a code failure.
 
 Env: NOTION_KEY, GH_TOKEN (repo-scope so private repos' run metadata is readable).
 """
-import json, math, os, sys, time, urllib.request, urllib.error
+import json, math, os, sys, time, re, base64, urllib.request, urllib.error
 from datetime import datetime, timezone
 
 NK = os.environ["NOTION_KEY"]
@@ -44,8 +44,85 @@ def gh(p):
     except Exception as e:
         sys.stderr.write(f"gh {p}: {e}\n"); return {}
 
+# ── drift guards: the hub should catch its OWN config going stale, not just watch the agents ──
+def wf_crons(repo, path):
+    """The cron expressions actually declared in a workflow's YAML (via the contents API).
+    Returns None if the file couldn't be read (so we never false-alarm on a transient error)."""
+    c = gh(f"/repos/Nadreau/{repo}/contents/.github/workflows/{path}")
+    if not c or "content" not in c:
+        return None
+    try:
+        txt = base64.b64decode(c["content"]).decode("utf-8", "ignore")
+    except Exception:
+        return None
+    return re.findall(r"cron:\s*['\"]([^'\"]+)['\"]", txt)
+
+def cron_drift(rows, sched_path, exempt=None):
+    """schedules.json drives the nudger + the Overdue state. If a workflow's real cron is edited
+    and schedules.json isn't, the nudger fires at the wrong time and Overdue lies. This reconciles
+    schedules.json against each tracked workflow's real YAML both ways. `exempt` = "repo/file"
+    strings that intentionally have a cron but shouldn't be nudged (silences deliberate omissions)."""
+    exempt = exempt or set()
+    warns = []
+    declared = {}
+    try:
+        for e in json.load(open(sched_path))["entries"]:
+            declared.setdefault((e["repo"], e["workflow"]), set()).add(e["cron"])
+    except Exception:
+        return warns
+    seen = set(); tracked = set()
+    for x in rows:
+        key = (x["repo"], x["file"]); tracked.add(key)
+        if key in seen or x["wf"]["state"] != "active" or f"{key[0]}/{key[1]}" in exempt:
+            continue
+        seen.add(key)
+        real = wf_crons(x["repo"], x["file"])
+        if real is None:
+            continue
+        realset, decl = set(real), declared.get(key, set())
+        if realset and not decl:
+            warns.append(f"{x['repo']}/{x['file']}: runs on cron {sorted(realset)} but has NO schedules.json entry — the nudger/Overdue can't see it (add it, or list it in nudge_exempt)")
+        elif realset != decl and (realset or decl):
+            warns.append(f"{x['repo']}/{x['file']}: schedules.json says {sorted(decl)} but the YAML says {sorted(realset)}")
+    for key in declared:
+        if key not in tracked:
+            warns.append(f"schedules.json points at {key[0]}/{key[1]}, which isn't a tracked workflow anymore (renamed/removed?)")
+    return warns
+
+def coverage_gaps(billing_repo_mins, known_non_hub):
+    """Any repo burning Actions minutes this cycle that the hub doesn't track = a blind spot."""
+    tracked = set(REPOS)
+    return [f"{rn} burned {round(m)} Actions min this month but isn't on the hub — add it to REPOS or to known_non_hub_repos"
+            for rn, m in sorted(billing_repo_mins.items(), key=lambda kv: -kv[1])
+            if rn not in tracked and rn not in known_non_hub and m > 0]
+
+def token_warning(now):
+    """The Claude Max-OAuth setup-token is shared by every Claude automation; when it expires they
+    all fail at once. Warn as the (config-recorded) expiry approaches."""
+    exp = CFG.get("claude_token_expiry")
+    if not exp:
+        return None
+    try:
+        d = datetime.strptime(exp, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+    days = (d - now).days
+    if days <= 45:
+        return (f"Claude OAuth token expires in {days} days ({exp}) — every Claude automation (account router, "
+                f"sales-coach, briefs) dies then. Run `claude setup-token`, update CLAUDE_CODE_OAUTH_TOKEN in "
+                f"bluon-account-agent + bluon-sales-coach, and bump claude_token_expiry in hub_config.json.")
+    return None
+
 def T(s): return [{"type": "text", "text": {"content": (s or "")[:1900]}}]
 def TB(s): return [{"type": "text", "text": {"content": (s or "")[:1900]}, "annotations": {"bold": True}}]
+def TL(s, url, sub=""):
+    """A table cell whose main line LINKS to url, with an optional plain second line.
+    So the pretty per-system tables become click-through (report page / run log)."""
+    main = {"type": "text", "text": {"content": (s or "—")[:1900]}}
+    if url: main["text"]["link"] = {"url": url}
+    out = [main]
+    if sub: out.append({"type": "text", "text": {"content": ("\n" + sub)[:600]}})
+    return out
 
 REPOS = {  # repo -> System
     "bluon-account-agent":   "Account Intelligence",
@@ -57,7 +134,8 @@ REPOS = {  # repo -> System
     "bluon-market-intel":    "Research Agents",
     "bluon-automations-hub": "Health",
 }
-SKIP_FILES = {"diag.yml", "maint.yml", "enrich.yml"}  # manual utility jobs, not agents
+SKIP_FILES = {"diag.yml", "maint.yml", "enrich.yml",  # manual utility jobs, not agents
+              "update-pr-progress.yml"}               # a Claude-cloud meta workflow (disabled), not a Bluon automation
 
 # friendly name / what-it-does / human schedule / live report page — keyed "repo/file"
 CATALOG = {
@@ -232,6 +310,13 @@ blocked = any("billing block" in r["why"] for r in rows)
 over = max(0, total_bill - INCLUDED_MIN)
 stamp = now.strftime("%b %d, %I:%M %p UTC")
 
+# ── drift guards: keep the hub honest about ITSELF (stale config drifts silently otherwise) ──
+SCHED_PATH = os.path.join(os.path.dirname(__file__) or ".", "schedules.json")
+warns = cron_drift(rows, SCHED_PATH, set(CFG.get("nudge_exempt", [])))
+warns += coverage_gaps(billing_repo_mins, set(CFG.get("known_non_hub_repos", [])))
+_tok = token_warning(now)
+if _tok: warns.append(_tok)
+
 # ── 1) rewrite the page (Meta-reporting layout: H1 sections w/ inline stats, per-item
 #      heading_3 + gray stat callout, · separators, dividers). Detail DB stays at bottom. ──
 kids = nt("GET", f"blocks/{PAGE}/children?page_size=100").get("results", [])
@@ -252,10 +337,11 @@ head = (f"This month  ·  {total_bill:,} / {INCLUDED_MIN:,} free GitHub minutes 
         + (f"  ·  {over:,} min over" if over else "")
         + f"  ·  {' · '.join(live_bits)}\n{mac_bit}"
         + (f"\n⛔ GitHub-hosted runs in private repos are blocked (no budget set) — Mac-runner + public-repo jobs are unaffected." if blocked else "\n✅ All systems running.")
+        + (f"\n⚠️ {len(warns)} config-drift / coverage warning(s) — see the box below" if warns else "")
         + f"  Resets the 1st · updated {stamp}")
 if anchor:
     nt("PATCH", f"blocks/{anchor['id']}", {"callout": {"rich_text": T(head), "icon": {"emoji": "⛽"},
-        "color": "red_background" if blocked else "green_background"}})
+        "color": ("red_background" if (blocked or warns) else "green_background")}})
 
 def _fmt_last(run):
     return pdate(run["run_started_at"]).strftime("%b %-d") if run else "never"
@@ -281,6 +367,11 @@ SYS_BLURB = {
 }
 
 blocks = []
+# ── drift / coverage warnings (only when something needs Niko's attention) ──
+if warns:
+    wtext = "Needs a look:\n" + "\n".join("• " + w for w in warns[:12])
+    blocks.append({"type": "callout", "callout": {"rich_text": T(wtext), "icon": {"emoji": "⚠️"},
+        "color": "yellow_background"}})
 # ── overview: one row per system, ranked by minutes ──
 blocks.append({"type": "heading_1", "heading_1": {"rich_text": T("At a Glance")}})
 by_sys = {}
@@ -307,9 +398,11 @@ for sname in sys_order:
     tbl = [_hcells("", "Automation", "Connection (from → to)", "Schedule", "Last run")]
     for x in items:
         status_cell = x["status"] + ("" if x["status"].startswith(("🟢", "▶️")) else f"\n{x['why'][:80]}")
-        name_cell = x["friendly"] + (f"\n{x['desc']}" if x["desc"] else "")
-        tbl.append(_cells(status_cell, name_cell, x.get("flow", "") or "—",
-                          x["sched"] or "manual", _fmt_last(x["run"])))
+        # Automation name → its live report page; Last-run → the GitHub run log. Click-through.
+        name_rt = TL(x["friendly"], x.get("report", ""), x.get("desc", ""))
+        last_rt = TL(_fmt_last(x["run"]), x["run"]["html_url"] if x["run"] else "")
+        tbl.append({"type": "table_row", "table_row": {"cells": [
+            T(status_cell), name_rt, T(x.get("flow", "") or "—"), T(x["sched"] or "manual"), last_rt]}})
     blocks.append({"type": "table", "table": {"table_width": 5, "has_column_header": True,
         "has_row_header": False, "children": tbl}})
 
