@@ -5,7 +5,7 @@
  "_claude_token_note": "The Max-OAuth setup-token that every Claude-based automation (account router, sales-coach, briefs) shares. 1-yr token set 2026-06-24. When you rotate it (claude setup-token → update CLAUDE_CODE_OAUTH_TOKEN in bluon-account-agent + bluon-sales-coach), bump this date so the hub's expiry warning resets.",
  "claude_token_expiry": "2027-06-24",
  "_known_non_hub_note": "Repos that burn Actions minutes but are deliberately NOT agent-automations (creative/data/site repos). Anything burning minutes that is NOT here and NOT in health_sync REPOS gets surfaced as a coverage gap for you to confirm.",
- "known_non_hub_repos": ["bluon-static-ads", "goldfish", "brain-vault"],
+ "known_non_hub_repos": ["bluon-static-ads", "goldfish", "brain-vault", "SlackBot-NameTagger"],
  "_nudge_exempt_note": "\"repo/workflow.yml\" entries that intentionally run on a cron but should NOT be nudged or flagged as drift (e.g. a public-repo safety-net sweep that never lags). Silences their drift warning so the box only shows real drift.",
- "nudge_exempt": []
+ "nudge_exempt": ["bluon-email-machine/to-hubspot.yml", "bluon-email-machine/reporting.yml", "hubspot-research-agent/research.yml", "bluon-sales-meeting-sync/sync.yml"]
 }

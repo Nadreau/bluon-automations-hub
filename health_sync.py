@@ -307,7 +307,7 @@ n_queue = sum(1 for r in rows if r["status"].startswith("🕐"))
 mac_repos = len(runner_state)
 mac_online = sum(1 for v in runner_state.values() if v == "online")
 blocked = any("billing block" in r["why"] for r in rows)
-over = max(0, total_bill - INCLUDED_MIN)
+over = max(0, counted - INCLUDED_MIN)   # only PRIVATE (billable) minutes count toward the free tier; public repos are unlimited-free
 stamp = now.strftime("%b %d, %I:%M %p UTC")
 
 # ── drift guards: keep the hub honest about ITSELF (stale config drifts silently otherwise) ──
@@ -326,15 +326,16 @@ for b in kids:   # clear everything managed except the anchor callout + the DB i
     if b["id"] not in {anchor and anchor["id"], dbblock and dbblock["id"]}:
         nt("DELETE", f"blocks/{b['id']}")
 
-pct = min(100, round(total_bill / INCLUDED_MIN * 100))
+pct = min(100, round(counted / INCLUDED_MIN * 100))
 live_bits = [f"{n_ok} healthy"]
 if n_run: live_bits.append(f"{n_run} running now")
 if n_queue: live_bits.append(f"{n_queue} queued")
 live_bits += [f"{n_fail} failing", f"{n_pause} paused"]
 mac_bit = (f"🖥 Mac runner ONLINE — {mac_repos} systems run free on Niko's Mac" if mac_online == mac_repos and mac_repos
            else f"🖥 ⚠️ Mac runner OFFLINE ({mac_online}/{mac_repos}) — its jobs queue until the Mac wakes")
-head = (f"This month  ·  {total_bill:,} / {INCLUDED_MIN:,} free GitHub minutes ({pct}%)"
+head = (f"This month  ·  {counted:,} / {INCLUDED_MIN:,} free private-repo minutes ({pct}%)"
         + (f"  ·  {over:,} min over" if over else "")
+        + (f"  ·  +{free_pub:,} free (public, unlimited)" if free_pub else "")
         + f"  ·  {' · '.join(live_bits)}\n{mac_bit}"
         + (f"\n⛔ GitHub-hosted runs in private repos are blocked (no budget set) — Mac-runner + public-repo jobs are unaffected." if blocked else "\n✅ All systems running.")
         + (f"\n⚠️ {len(warns)} config-drift / coverage warning(s) — see the box below" if warns else "")

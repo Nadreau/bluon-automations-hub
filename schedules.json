@@ -17,8 +17,6 @@
     {"repo": "bluon-ads-dashboard",   "workflow": "sync-dco-database.yml",          "cron": "0 */4 * * *"},
     {"repo": "bluon-sales-coach",     "workflow": "grade.yml",                      "cron": "0 14,17,20 * * 1-5"},
     {"repo": "bluon-sales-coach",     "workflow": "digest.yml",                     "cron": "0 22 * * 1-5"},
-    {"repo": "bluon-sales-meeting-sync", "workflow": "sync.yml",                    "cron": "40 14 * * 1-6"},
-    {"repo": "bluon-sales-meeting-sync", "workflow": "sync.yml",                    "cron": "10,40 15 * * 1-6"},
     {"repo": "bluon-automations-hub", "workflow": "health.yml",                     "cron": "30 11,16,21 * * *"}
   ]
 }
